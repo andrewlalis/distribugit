@@ -62,7 +62,7 @@ public class DistribuGit {
 
 	private void completeStep() {
 		stepsComplete++;
-		statusListener.progressUpdated(stepsComplete / (float) stepsTotal);
+		statusListener.progressUpdated(stepsComplete / (float) stepsTotal * 100f);
 	}
 
 	private Map<String, Path> downloadRepositories(List<String> uris) throws IOException {
@@ -120,7 +120,17 @@ public class DistribuGit {
 		private RepositorySelector selector;
 		private RepositoryAction action;
 		private GitCredentials credentials = cmd -> {};
-		private StatusListener statusListener;
+		private StatusListener statusListener = new StatusListener() {
+			@Override
+			public void progressUpdated(float percentage) {
+				System.out.printf("Progress: %.1f%%%n", percentage);
+			}
+
+			@Override
+			public void messageReceived(String message) {
+				System.out.println("Message: " + message);
+			}
+		};
 		private Path workingDir = Path.of(".", ".distribugit_tmp");
 		private boolean strictFail = true;
 		private boolean cleanup = false;
@@ -163,30 +173,5 @@ public class DistribuGit {
 		public DistribuGit build() {
 			return new DistribuGit(selector, action, credentials, statusListener, workingDir, strictFail, cleanup);
 		}
-	}
-
-	public static void main(String[] args) throws IOException {
-		new DistribuGit.Builder()
-				.selector(RepositorySelector.from(
-						"https://github.com/andrewlalis/RandomHotbar.git",
-						"https://github.com/andrewlalis/CoyoteCredit.git",
-						"https://github.com/andrewlalis/SignalsAndSystems2021.git"
-				))
-				.credentials(GitCredentials.ofUsernamePassword("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", ""))
-				.action(RepositoryAction.ofCommand("/bin/bash", "../../test.sh"))
-				.statusListener(new StatusListener() {
-					@Override
-					public void progressUpdated(float percentage) {
-						System.out.printf("Progress: %.1f%%%n", percentage * 100);
-					}
-
-					@Override
-					public void messageReceived(String message) {
-						System.out.println("Message: " + message);
-					}
-				})
-				.strictFail(false)
-				.cleanup(false)
-				.build().doActions();
 	}
 }
