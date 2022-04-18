@@ -166,13 +166,14 @@ public class DistribuGit {
 	}
 
 	public static void main(String[] args) throws IOException {
-		new Builder()
+		new DistribuGit.Builder()
 				.selector(RepositorySelector.from(
 						"https://github.com/andrewlalis/RandomHotbar.git",
 						"https://github.com/andrewlalis/CoyoteCredit.git",
 						"https://github.com/andrewlalis/SignalsAndSystems2021.git"
 				))
-				.action(git -> System.out.println("Cloned!"))
+				.credentials(GitCredentials.ofUsernamePassword("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", ""))
+				.action(RepositoryAction.ofCommand("/bin/bash", "../../test.sh"))
 				.statusListener(new StatusListener() {
 					@Override
 					public void progressUpdated(float percentage) {
@@ -184,8 +185,8 @@ public class DistribuGit {
 						System.out.println("Message: " + message);
 					}
 				})
-				.strictFail(true)
-				.cleanup(true)
+				.strictFail(false)
+				.cleanup(false)
 				.build().doActions();
 	}
 }
