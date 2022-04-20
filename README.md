@@ -1,7 +1,13 @@
 # DistribuGit
 Tool for performing operations on many git repositories at once. It works by cloning a set of repositories, and applying an action to each repository.
 
-The easiest way to use this toolset for automating git operations is to include it as a dependency in your Java project. You can get this project from [jitpack.io](https://jitpack.io/#andrewlalis/distribugit).
+The simplest way to get started is to get the [latest release](https://github.com/andrewlalis/distribugit/releases) JAR file, and run it in the command line.
+```
+java -jar distribugit-1.2.0.jar -t abc -s org-repo-prefix:concord/Java_ -a "ls"
+```
+The above command simply gets all repositories from the `corcord` GitHub organization which begin with `"Java_"`, and executes the `ls` command in each repository.
+
+In addition to the CLI, you can include DistribuGit as a dependency in your Java project. You can get this project from [jitpack.io](https://jitpack.io/#andrewlalis/distribugit).
 
 Here's an example of how one might use DistribuGit to run `mvn test` on many repositories:
 
