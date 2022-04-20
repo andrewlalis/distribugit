@@ -14,7 +14,17 @@ import org.eclipse.jgit.util.FS;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 
+/**
+ * Supplies credentials information to a git command, which is needed when
+ * interacting with private repositories, or when pushing changes to a
+ * repository.
+ */
 public interface GitCredentials {
+	/**
+	 * Adds credentials information to the given command.
+	 * @param gitCommand The command to add credentials to.
+	 * @throws Exception If an error occurs while adding credentials.
+	 */
 	void addCredentials(TransportCommand<?, ?> gitCommand) throws Exception;
 
 	static GitCredentials ofUsernamePassword(String username, String password) {

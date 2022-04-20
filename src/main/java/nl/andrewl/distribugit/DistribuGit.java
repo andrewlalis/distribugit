@@ -9,10 +9,37 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ForkJoinPool;
 
+/**
+ * A single DistribuGit instance is used to execute a single sequence of
+ * operations on a set of git repositories, as configured according to its
+ * various components.
+ * <p>
+ *     A DistribuGit object, when invoking {@link DistribuGit#doActions()} or
+ *     {@link DistribuGit#doActionsAsync()}, will perform the following series
+ *     of operations:
+ * </p>
+ * <ol>
+ *     <li>Call {@link RepositorySelector#getURIs()} to collect the list of
+ *     repositories that it will operate on.</li>
+ *     <li>Download each repository to the working directory.</li>
+ *     <li>Applies the configured {@link RepositoryAction} to all of the
+ *     repositories.</li>
+ *     <li>If provided, applies the configured finalization action to all of
+ *     the repositories.</li>
+ *     <li>If needed, all repositories are deleted.</li>
+ * </ol>
+ * <p>
+ *     Note that repositories are not guaranteed to be processed in any
+ *     particular order.
+ * </p>
+ */
 public class DistribuGit {
 	private final RepositorySelector selector;
 	private final RepositoryAction action;
+	private final RepositoryAction finalizationAction;
 	private final GitCredentials credentials;
 	private final StatusListener statusListener;
 	private final Path workingDir;
@@ -22,9 +49,27 @@ public class DistribuGit {
 	private int stepsComplete;
 	private int stepsTotal;
 
+	/**
+	 * Constructs a DistribuGit instance.
+	 * @param selector A selector that provides a list of repository URIs.
+	 * @param action An action to do for each repository.
+	 * @param finalizationAction A final action to do for each repository,
+	 *                           after all normal actions are done.
+	 * @param credentials The credentials to use to operate on repositories.
+	 * @param statusListener A listener that can be used to get information
+	 *                       about the progress of the operations, and any
+	 *                       messages that are emitted.
+	 * @param workingDir The directory in which to do all git operations.
+	 * @param strictFail Whether to fail instantly if any error occurs. If set
+	 *                   to false, the program will continue even if actions
+	 *                   fail for some repositories.
+	 * @param cleanup Whether to perform cleanup after everything is done. This
+	 *                will remove the working directory once we're done.
+	 */
 	public DistribuGit(
 		RepositorySelector selector,
 		RepositoryAction action,
+		RepositoryAction finalizationAction,
 		GitCredentials credentials,
 		StatusListener statusListener,
 		Path workingDir,
@@ -33,6 +78,7 @@ public class DistribuGit {
 	) {
 		this.selector = selector;
 		this.action = action;
+		this.finalizationAction = finalizationAction;
 		this.credentials = credentials;
 		this.statusListener = statusListener;
 		this.workingDir = workingDir;
@@ -40,16 +86,35 @@ public class DistribuGit {
 		this.cleanup = cleanup;
 	}
 
-	public void doActions() throws IOException {
+	/**
+	 * Performs the configured actions on the selected git repositories.
+	 * @throws IOException If an error occurs that requires us to quit early.
+	 * This is only thrown if {@link DistribuGit#strictFail} is true.
+	 */
+	public synchronized void doActions() throws IOException {
 		stepsComplete = 0;
+		if (Files.exists(workingDir)) {
+			try (var s = Files.list(workingDir)) {
+				if (s.findAny().isPresent()) throw new IOException("Working directory is not empty!");
+			}
+		}
 		Utils.delete(workingDir); // Delete the directory if it already exists.
 		Files.createDirectory(workingDir);
 		statusListener.messageReceived("Prepared temporary directory for repositories.");
+		List<String> repositoryURIs;
 		try {
-			List<String> repositoryURIs = selector.getURIs();
-			stepsTotal = 2 * repositoryURIs.size();
-			Map<String, Path> repoDirs = downloadRepositories(repositoryURIs);
-			applyActionToRepositories(repoDirs);
+			repositoryURIs = selector.getURIs();
+		} catch (Exception e) {
+			throw new IOException("Could not fetch repository URIs.", e);
+		}
+		try {
+			stepsTotal = 3 * repositoryURIs.size();
+			Map<String, Git> repos = downloadRepositories(repositoryURIs);
+			applyActionToRepositories(repos, action);
+			if (finalizationAction != null) {
+				applyActionToRepositories(repos, finalizationAction);
+			}
+			repos.values().forEach(Git::close);
 		} catch (Exception e) {
 			throw new IOException(e);
 		} finally {
@@ -60,53 +125,93 @@ public class DistribuGit {
 		}
 	}
 
+	/**
+	 * Runs the configured git actions on all selected repositories in an
+	 * asynchronous manner.
+	 * @return A future that completes when all actions are complete, or if an
+	 * error occurs and the operation quits early.
+	 */
+	public CompletableFuture<Void> doActionsAsync() {
+		final CompletableFuture<Void> cf = new CompletableFuture<>();
+		ForkJoinPool.commonPool().submit(() -> {
+			try {
+				doActions();
+				cf.complete(null);
+			} catch (IOException e) {
+				cf.completeExceptionally(e);
+			}
+		});
+		return cf;
+	}
+
 	private void completeStep() {
 		stepsComplete++;
 		statusListener.progressUpdated(stepsComplete / (float) stepsTotal * 100f);
 	}
 
-	private Map<String, Path> downloadRepositories(List<String> uris) throws IOException {
-		Map<String, Path> repositoryDirs = new HashMap<>();
+	/**
+	 * Downloads a set of repositories to working directories.
+	 * @param uris The repositories to download.
+	 * @return A map which maps each repository URI to its {@link Git} instance.
+	 * @throws IOException If {@link DistribuGit#strictFail} is set to true,
+	 * this will be thrown if an error occurs.
+	 */
+	private Map<String, Git> downloadRepositories(List<String> uris) throws IOException {
+		Map<String, Git> repositoryDirs = new HashMap<>();
 		int dirIdx = 1;
 		for (String repositoryURI : uris) {
 			Path repoDir = workingDir.resolve(Integer.toString(dirIdx++));
+			statusListener.messageReceived("Cloning repository " + repositoryURI + " to " + repoDir);
+			CloneCommand clone = Git.cloneRepository();
 			try {
-				statusListener.messageReceived("Cloning repository " + repositoryURI + " to " + repoDir);
-				CloneCommand clone = Git.cloneRepository();
 				credentials.addCredentials(clone);
-				clone.setDirectory(repoDir.toFile());
-				clone.setURI(repositoryURI);
-				try (var ignored = clone.call()) {
-					repositoryDirs.put(repositoryURI, repoDir);
-				} catch (Exception e) {
-					if (strictFail) {
-						throw new IOException(e);
-					} else {
-						repositoryDirs.put(repositoryURI, null);
-						e.printStackTrace();
-					}
-				}
 			} catch (Exception e) {
 				if (strictFail) {
 					throw new IOException(e);
 				}
+				statusListener.messageReceived("Could not add credentials to repository: " + e.getMessage());
 				e.printStackTrace();
+				// Skip the rest of the logic since this failed. Just go to the next repository.
+				completeStep();
+				continue;
+			}
+			clone.setDirectory(repoDir.toFile());
+			clone.setURI(repositoryURI);
+			try (var git = clone.call()) {
+				repositoryDirs.put(repositoryURI, git);
+			} catch (Exception e) {
+				if (strictFail) {
+					throw new IOException(e);
+				} else {
+					statusListener.messageReceived("Could not clone repository: " + e.getMessage());
+					repositoryDirs.put(repositoryURI, null);
+					e.printStackTrace();
+				}
 			}
 			completeStep();
 		}
 		return repositoryDirs;
 	}
 
-	private void applyActionToRepositories(Map<String, Path> repoDirs) throws IOException {
-		for (var entry : repoDirs.entrySet()) {
+	/**
+	 * Applies an action to all git repositories in the given map.
+	 * @param repositories A map which maps URIs to {@link Git} instances.
+	 * @param action The action to apply to each repository.
+	 * @throws IOException If {@link DistribuGit#strictFail} is set to true,
+	 * this will be thrown if an error occurs.
+	 */
+	private void applyActionToRepositories(Map<String, Git> repositories, RepositoryAction action) throws IOException {
+		for (var entry : repositories.entrySet()) {
 			if (entry.getValue() != null) {
-				try (Git git = Git.open(entry.getValue().toFile())) {
+				try {
+					Git git = entry.getValue();
 					statusListener.messageReceived("Applying action to repository " + entry.getKey());
 					action.doAction(git);
 				} catch (Exception e) {
 					if (strictFail) {
 						throw new IOException(e);
 					}
+					statusListener.messageReceived("Action could not be applied to repository: " + e.getMessage());
 					e.printStackTrace();
 				}
 			} else {
@@ -116,9 +221,14 @@ public class DistribuGit {
 		}
 	}
 
+	/**
+	 * A builder class to help with constructing {@link DistribuGit} instances
+	 * with a fluent method interface.
+	 */
 	public static class Builder {
 		private RepositorySelector selector;
 		private RepositoryAction action;
+		private RepositoryAction finalizationAction;
 		private GitCredentials credentials = cmd -> {};
 		private StatusListener statusListener = new StatusListener() {
 			@Override
@@ -142,6 +252,11 @@ public class DistribuGit {
 
 		public Builder action(RepositoryAction action) {
 			this.action = action;
+			return this;
+		}
+
+		public Builder finalizationAction(RepositoryAction finalizationAction) {
+			this.finalizationAction = finalizationAction;
 			return this;
 		}
 
@@ -171,7 +286,10 @@ public class DistribuGit {
 		}
 
 		public DistribuGit build() {
-			return new DistribuGit(selector, action, credentials, statusListener, workingDir, strictFail, cleanup);
+			if (selector == null || action == null) {
+				throw new IllegalStateException("Cannot build an instance of DistribuGit without a selector or action.");
+			}
+			return new DistribuGit(selector, action, finalizationAction, credentials, statusListener, workingDir, strictFail, cleanup);
 		}
 	}
 }

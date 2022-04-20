@@ -2,7 +2,15 @@ package nl.andrewl.distribugit;
 
 import org.eclipse.jgit.api.Git;
 
+/**
+ * An action that can be applied to a git repository.
+ */
 public interface RepositoryAction {
+	/**
+	 * Performs the action on the given git repository.
+	 * @param git A reference to the git repository.
+	 * @throws Exception If an error occurs during the action.
+	 */
 	void doAction(Git git) throws Exception;
 
 	/**
