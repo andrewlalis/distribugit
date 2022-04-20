@@ -1,40 +1,46 @@
 package nl.andrewl.distribugit.cli;
 
-import nl.andrewl.distribugit.*;
-import nl.andrewl.distribugit.selectors.GitHubSelectorBuilder;
+import nl.andrewl.distribugit.DistribuGit;
+import nl.andrewl.distribugit.GitCredentials;
+import nl.andrewl.distribugit.RepositoryAction;
+import nl.andrewl.distribugit.StatusListener;
 import picocli.CommandLine;
 
-import java.io.IOException;
 import java.nio.file.Path;
 import java.util.concurrent.Callable;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
-@CommandLine.Command(name = "distribugit")
+@CommandLine.Command(name = "distribugit", description = "DistribuGit command-line tool for performing distributed git operations.", mixinStandardHelpOptions = true)
 public class DistribuGitCommand implements Callable<Integer> {
-	private static final Pattern SELECTOR_EXPRESSION_PATTERN = Pattern.compile("([\\w-]+):(.+)");
-	private static final Pattern ORG_REPO_PREFIX_PATTERN = Pattern.compile("(.+)/(.+)");
-
 	@CommandLine.Option(names = {"-d", "--dir"}, description = "The working directory for DistribuGit", defaultValue = "./.distribugit_tmp")
-	private Path workingDir;
+	public Path workingDir;
 
-	@CommandLine.Option(names = {"-s", "--selector"}, description = "The repository selector to use. Format: \"slug:content\"", required = true)
-	private String selectorExpression;
+	@CommandLine.Option(
+			names = {"-s", "--selector"},
+			description = """
+					The repository selector to use.
+					The following selector types are permitted:
+					 - "org-repo-prefix:{orgName}/{repoPrefix}": Selects repositories from a GitHub organization whose name begins with the given prefix.
+					 - "stdin": Selects repository URIs that have been provided to the program via stdin, with one URI per line.
+					 - "file:{filePath}": Selects repository URIs written in a file, with one URI per line.
+					""",
+			required = true
+	)
+	public String selectorExpression;
 
 	@CommandLine.Option(names = {"-a", "--action"}, description = "The command to run on each repository.", required = true)
-	private String actionCommand;
+	public String actionCommand;
 
 	@CommandLine.Option(names = {"-fa", "--finalization-action"}, description = "A command to run on each repository after all normal actions.")
-	private String finalizationActionCommand;
+	public String finalizationActionCommand;
 
 	@CommandLine.Option(names = {"-t", "--access-token"}, description = "The access token to use to perform operations.")
-	private String accessToken;
+	public String accessToken;
 
 	@CommandLine.Option(names = {"-sf", "--strict-fail"}, description = "Whether to preemptively fail if any error occurs.", defaultValue = "true")
-	private boolean strictFail;
+	public boolean strictFail;
 
 	@CommandLine.Option(names = {"-cl", "--cleanup"}, description = "Whether to remove all repository files when done.", defaultValue = "false")
-	private boolean cleanup;
+	public boolean cleanup;
 
 	@Override
 	public Integer call() throws Exception {
@@ -42,7 +48,7 @@ public class DistribuGitCommand implements Callable<Integer> {
 				.workingDir(workingDir)
 				.strictFail(strictFail)
 				.cleanup(cleanup)
-				.selector(parseSelectorExpression(selectorExpression))
+				.selector(SelectorExpressionParser.parse(selectorExpression, accessToken))
 				.action(RepositoryAction.ofCommand(actionCommand.split("\\s+")));
 		if (finalizationActionCommand != null) {
 			builder.finalizationAction(RepositoryAction.ofCommand(finalizationActionCommand.split("\\s+")));
@@ -63,20 +69,6 @@ public class DistribuGitCommand implements Callable<Integer> {
 		});
 		builder.build().doActions();
 		return 0;
-	}
-
-	private RepositorySelector parseSelectorExpression(String expr) throws IOException {
-		Matcher m = SELECTOR_EXPRESSION_PATTERN.matcher(expr);
-		if (!m.find()) throw new IllegalArgumentException("Invalid selector expression. Should be \"selector-type:expression\".");
-		String slug = m.group(1);
-		String content = m.group(2);
-		if (slug.equalsIgnoreCase("org-repo-prefix")) {
-			Matcher m1 = ORG_REPO_PREFIX_PATTERN.matcher(content);
-			if (!m1.find()) throw new IllegalArgumentException("Invalid content for org-repo-prefix select. Should be \"orgName/prefix\"");
-			return GitHubSelectorBuilder.fromPersonalAccessToken(accessToken).orgAndPrefix(m1.group(1), m1.group(2));
-		} else {
-			throw new IllegalArgumentException("Unsupported selector type: \"" + slug + "\".");
-		}
 	}
 
 	public static void main(String[] args) {

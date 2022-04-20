@@ -9,6 +9,7 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ForkJoinPool;
 
@@ -120,7 +121,7 @@ public class DistribuGit {
 			if (finalizationAction != null) {
 				applyActionToRepositories(repos, finalizationAction);
 			}
-			repos.values().forEach(Git::close);
+			repos.values().stream().filter(Objects::nonNull).forEach(Git::close);
 		} catch (Exception e) {
 			throw new IOException(e);
 		} finally {

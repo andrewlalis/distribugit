@@ -23,4 +23,12 @@ public interface RepositorySelector {
 	static RepositorySelector from(String... uris) {
 		return () -> List.of(uris);
 	}
+
+	static RepositorySelector from(RepositorySelector... selectors) {
+		return () -> {
+			List<String> uris = new ArrayList<>();
+			for (var selector : selectors) uris.addAll(selector.getURIs());
+			return uris;
+		};
+	}
 }
