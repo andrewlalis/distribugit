@@ -103,12 +103,18 @@ public class DistribuGit {
 		statusListener.messageReceived("Prepared temporary directory for repositories.");
 		List<String> repositoryURIs;
 		try {
+			statusListener.messageReceived("Fetching repository URIs.");
 			repositoryURIs = selector.getURIs();
 		} catch (Exception e) {
 			throw new IOException("Could not fetch repository URIs.", e);
 		}
+		if (repositoryURIs.isEmpty()) {
+			statusListener.messageReceived("No repositories were found.");
+			statusListener.progressUpdated(100f);
+			return;
+		}
 		try {
-			stepsTotal = 3 * repositoryURIs.size();
+			stepsTotal = (finalizationAction == null ? 2 : 3) * repositoryURIs.size();
 			Map<String, Git> repos = downloadRepositories(repositoryURIs);
 			applyActionToRepositories(repos, action);
 			if (finalizationAction != null) {
