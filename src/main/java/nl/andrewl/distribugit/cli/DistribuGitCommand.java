@@ -27,10 +27,22 @@ public class DistribuGitCommand implements Callable<Integer> {
 	)
 	public String selectorExpression;
 
-	@CommandLine.Option(names = {"-a", "--action"}, description = "The command to run on each repository.", required = true)
+	@CommandLine.Option(
+			names = {"-a", "--action"},
+			description = """
+   					The command to run on each repository.
+   					Each command has access to the following environment variables:
+   					 - DISTRIBUGIT_INVOKE_DIR - The directory in which distribugit was invoked.
+   					 - DISTRIBUGIT_WORKING_DIR - The working directory of distribugit.
+   					""",
+			required = true
+	)
 	public String actionCommand;
 
-	@CommandLine.Option(names = {"-fa", "--finalization-action"}, description = "A command to run on each repository after all normal actions.")
+	@CommandLine.Option(
+			names = {"-fa", "--finalization-action"},
+			description = "A command to run on each repository after all normal actions. Has access to the same environment variables as --action."
+	)
 	public String finalizationActionCommand;
 
 	@CommandLine.Option(names = {"-t", "--access-token"}, description = "The access token to use to perform operations.")
